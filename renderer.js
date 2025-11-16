@@ -4,14 +4,44 @@ window.ipcRenderer = require('electron').ipcRenderer;
 
 // 加载 lucide 图标库
 try {
-  window.lucide = require('lucide');
+  const lucideModule = require('lucide');
+  window.lucide = lucideModule;
+  window.lucideIcons = lucideModule.icons || lucideModule;
   console.log('✅ Lucide 图标库加载成功');
+  
+  // 创建全局的图标初始化函数
+  window.initLucideIcons = function() {
+    try {
+      if (window.lucide && window.lucide.createIcons) {
+        window.lucide.createIcons({ icons: window.lucideIcons });
+      }
+    } catch (error) {
+      console.warn('初始化 Lucide 图标失败:', error);
+    }
+  };
+  
+  // 重写 lucide.createIcons 为我们的包装函数
+  if (window.lucide && window.lucide.createIcons) {
+    const originalCreateIcons = window.lucide.createIcons;
+    window.lucide.createIcons = function(options) {
+      try {
+        if (!options || !options.icons) {
+          return originalCreateIcons.call(window.lucide, { icons: window.lucideIcons });
+        }
+        return originalCreateIcons.call(window.lucide, options);
+      } catch (error) {
+        console.warn('创建图标失败:', error);
+      }
+    };
+  }
 } catch (error) {
   console.error('❌ Lucide 图标库加载失败:', error);
-  // 提供一个空的 createIcons 函数避免报错
+  // 提供一个空的函数避免报错
   window.lucide = {
     createIcons: () => console.warn('Lucide 图标库未加载')
   };
+  window.lucideIcons = {};
+  window.initLucideIcons = () => console.warn('Lucide 图标库未加载');
 }
 
 /**
@@ -51,8 +81,8 @@ async function refreshAllData() {
     }
     
     // 5. 重新初始化图标
-    if (typeof lucide !== 'undefined') {
-      lucide.createIcons();
+    if (typeof lucide !== 'undefined' && lucide.createIcons) {
+      lucide.createIcons({ icons: window.lucideIcons });
     }
     
     console.log('✅ 所有数据刷新完成');
