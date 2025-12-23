@@ -7,6 +7,12 @@ const os = require('os');
 // 将解压的 node_modules 添加到模块搜索路径
 const Module = require('module');
 
+// 251223mochance添加的变量声明
+let isForceUpdateActive = false;
+let lastVersionCheckTime = 0;
+let isMaintenanceModeActive = false;
+let isApiUnavailable = false;
+
 // 计算 asar.unpacked 的路径
 const isPackaged = __dirname.includes('app.asar');
 const unpackedNodeModules = isPackaged 

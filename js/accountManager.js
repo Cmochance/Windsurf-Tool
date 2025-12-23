@@ -2290,3 +2290,9 @@ function handleConfirmCancel() {
     confirmResolve = null;
   }
 }
+
+// 👇 必须把这些函数挂载到 window 对象上，HTML 里的按钮才能找到它们
+window.batchGetAllTokens = batchGetAllTokens;
+window.refreshAllData = refreshAllData;
+window.showImportAccountForm = showImportAccountForm;
+window.showAddAccountForm = showAddAccountForm; // 预防万一，这个可能也需要

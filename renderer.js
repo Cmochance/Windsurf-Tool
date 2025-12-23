@@ -1,4 +1,12 @@
 // renderer.js - 渲染进程脚本
+
+// 添加全局变量
+let isMaintenanceModeActive = false; // 维护模式状态
+let isForceUpdateActive = false;    // 强制更新状态
+let isApiUnavailable = false;      // API 无法访问状态
+let lastVersionCheckTime = 0;    // 上次版本检查时间
+let versionCheckCooldown = 60 * 1000; // 版本检查冷却时间（1分钟）
+
 // 将 ipcRenderer 挂载到 window 对象，供全局使用
 window.ipcRenderer = require('electron').ipcRenderer;
 
@@ -19,6 +27,8 @@ try {
       console.warn('初始化 Lucide 图标失败:', error);
     }
   };
+  // 兼容 index.html 里的 inline onclick="batchGetAllTokens()"
+  // 注意：函数定义在文件后部，这里先不绑定，等函数声明完成后再绑定。
   
   // 重写 lucide.createIcons 为我们的包装函数
   if (window.lucide && window.lucide.createIcons) {
@@ -4034,7 +4044,7 @@ async function batchGetAllTokens() {
     showBatchTokenProgressModal();
 
     // 调用主进程处理
-    const result = await ipcRenderer.invoke('batch-get-all-tokens');
+    const result = await window.ipcRenderer.invoke('batch-get-all-tokens');
 
     if (!result.success) {
       showToast(result.error || '批量获取Token失败', 'error');
@@ -4055,6 +4065,9 @@ async function batchGetAllTokens() {
     }
   }
 }
+
+// 兼容 index.html 里的 inline onclick="batchGetAllTokens()"
+window.batchGetAllTokens = batchGetAllTokens;
 
 /**
  * 显示批量获取Token进度弹窗
