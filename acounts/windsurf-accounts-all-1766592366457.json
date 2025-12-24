@@ -1,0 +1,20 @@
+{
+  "exportTime": "2025-12-24T16:06:06.457Z",
+  "exportTimeLocal": "2025/12/25 00:06:06",
+  "totalCount": 1,
+  "accounts": [
+    {
+      "id": "1766590819306",
+      "email": "70193qf1@mochance.xyz",
+      "password": "70193qf1@mochance.xyz",
+      "name": "Mary Walker",
+      "apiKey": "sk-ws-01-XSnTOxq6vh9uoH-mIgl8kevnwIP2ac4ymXQCHsufByN-wvZAmJZRtZmFEH6lAkU6ctSRsk2uhIVr88cUvFJaTeO3M9AM9g",
+      "apiServerUrl": "https://server.self-serve.windsurf.com",
+      "refreshToken": "AMf-vBwsV5095p7Gj4OVz1gk3GqrqXnbp-3jku0l7wWNODW4xs_o5Xi6YPxv2mSFmEMrTacjoc5pWFpnPhmg5y1_JR4_WRiKKKCV8Z5ur59-xPH7vLPGQKOZC3Q2klvqfOwI7zjqImlO2CtOqKskIifA1VypVRC1Jfqn0E6nHNufsEijC82khYXQyNRcTYid7OPuqzunRrTYX-7ctU_ak4ir31EMwSpY3Q",
+      "createdAt": "2025-12-24T15:40:19.306Z",
+      "type": "Free",
+      "credits": 25,
+      "usage": 64
+    }
+  ]
+}

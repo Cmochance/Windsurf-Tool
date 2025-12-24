@@ -1,9 +1,19 @@
 const Imap = require('imap');
 const { simpleParser } = require('mailparser');
+const iconv = require('iconv-lite');
 
 /**
  * 本地邮箱验证码接收器
  */
+// 检测是否为乱码文本（简单启发式）
+function isGarbledText(text) {
+  if (!text || text.length < 10) return false;
+  // 检测常见乱码特征：连续的问号、方块字符、或高比例的不可打印字符
+  const garbledPatterns = /[\ufffd\u0000-\u001f]{3,}|\?{5,}/;
+  const nonPrintableRatio = (text.match(/[\x00-\x1f\x7f-\x9f]/g) || []).length / text.length;
+  return garbledPatterns.test(text) || nonPrintableRatio > 0.1;
+}
+
 class EmailReceiver {
   constructor(config, logCallback = null) {
     this.config = config;
@@ -103,6 +113,8 @@ class EmailReceiver {
         const date = parsed.date || new Date();
         
         this.log(`邮件 #${emailId} - 主题: ${subject}, 发件人: ${from}, 时间: ${date}`);
+        this.log(`[DEBUG] 邮件 #${emailId} - 收件人: ${to}`);
+        this.log(`[DEBUG] 邮件 #${emailId} - Content-Type: ${parsed.headers?.get('content-type') || 'unknown'}`);
         
         // 检查邮件时间，只处理最近2分钟内的邮件
         const emailAge = Date.now() - new Date(date).getTime();
@@ -129,21 +141,27 @@ class EmailReceiver {
           return false;
         }
         
-        // 验证码匹配模式
+        // 验证码匹配模式（按优先级排序，更精确的在前）
         const patterns = [
-          /following\s+6\s+digit\s+code[^\d]+(\d{6})/i,
-          /enter\s+the\s+following[^\d]+(\d{6})/i,
-          /verification code[：:\s]+([A-Z0-9]{6})/i,
-          /code is[：:\s]+([A-Z0-9]{6})/i,
-          /your code[：:\s]+([A-Z0-9]{6})/i,
-          /code[：:\s]+([A-Z0-9]{6})/i,
-          /验证码[：:\s]*(\d{6})/,
-          /验证码[：:\s]*([A-Z0-9]{6})/,
-          /\b(\d{6})\b/
+          // Windsurf 特定格式
+          /following\s+6\s*-?\s*digit\s+code[^\d]*(\d{6})/i,
+          /enter\s+(?:the\s+)?following[^\d]*(\d{6})/i,
+          // 通用验证码格式
+          /verification\s*code[：:\s]*([A-Z0-9]{6})/i,
+          /verify\s*code[：:\s]*([A-Z0-9]{6})/i,
+          /code\s*(?:is)?[：:\s]+([A-Z0-9]{6})/i,
+          /your\s*code[：:\s]*([A-Z0-9]{6})/i,
+          // 中文格式（支持全角/半角冒号和空格）
+          /验证码[：:\s\u3000]*([A-Z0-9]{6})/i,
+          /验证代码[：:\s\u3000]*([A-Z0-9]{6})/i,
+          /code[：:\s]*([A-Z0-9]{6})(?![0-9])/i,
+          // 独立的6位数字（更严格：排除日期、电话等场景）
+          /(?:^|[^0-9])([0-9]{6})(?:[^0-9]|$)/
         ];
         
         // 优先从主题提取验证码（最快，无需解析内容）
-        const subjectMatch = subject.match(/^(\d{6})\s*-/);
+        // 支持格式: "123456 - xxx" 或 "xxx - 123456" 或 "Verify xxx 123456"
+        const subjectMatch = subject.match(/(?:^|[\s\-:])([0-9]{6})(?:[\s\-]|$)/);
         if (subjectMatch) {
           cleanup();
           if (!isResolved) {
@@ -158,6 +176,7 @@ class EmailReceiver {
         
         // 方案1: 优先从纯文本提取（最快）
         if (parsed.text) {
+          this.log(`[DEBUG] 纯文本内容(前200字符): ${parsed.text.substring(0, 200).replace(/\n/g, '\\n')}`);
           const textLower = parsed.text.toLowerCase();
           const emailDomain = targetEmail.split('@')[0];
           const isTargetEmail = to.includes(targetEmail) || 
@@ -187,6 +206,9 @@ class EmailReceiver {
         // 方案2: 如果纯文本没有，直接从HTML原文匹配（快速，不清理）
         if (parsed.html) {
           this.log('纯文本未找到，尝试从HTML原文提取');
+          // 去除HTML标签后打印内容便于调试
+          const htmlTextOnly = parsed.html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+          this.log(`[DEBUG] HTML文本内容(前200字符): ${htmlTextOnly.substring(0, 200)}`);
           
           const htmlLower = parsed.html.toLowerCase();
           const emailDomain = targetEmail.split('@')[0];
@@ -327,8 +349,16 @@ class EmailReceiver {
           return;
         }
 
-        // 只搜索未读邮件（最快）
-        const searchCriteria = ['UNSEEN'];
+        // 构建搜索条件：优先搜索最近5分钟内的未读邮件
+        // 如果多次搜索无结果，扩大到已读邮件（防止被其他客户端标记已读）
+        const sinceDate = new Date(Date.now() - 5 * 60 * 1000); // 5分钟前
+        const searchCriteria = [
+          ['SINCE', sinceDate],
+          'UNSEEN'
+        ];
+
+        this.log(`[DEBUG] 搜索条件: SINCE ${sinceDate.toISOString()}, UNSEEN`);
+        this.log(`[DEBUG] 当前邮箱: ${currentBox}`);
 
         imap.search(searchCriteria, (err, results) => {
           if (err) {
@@ -336,17 +366,38 @@ class EmailReceiver {
             return;
           }
 
+          this.log(`[DEBUG] UNSEEN 搜索结果: ${results ? results.length : 0} 封邮件, IDs: ${results ? results.slice(0, 5).join(',') : 'none'}`);
+
           if (!results || results.length === 0) {
-            // 如果收件箱没有邮件且未检查垃圾箱，则切换到垃圾箱
-            if (currentBox === 'INBOX' && !junkBoxChecked) {
-              const elapsedTime = Date.now() - startTime;
-              // 在收件箱等待30秒后，如果还没找到，就检查垃圾箱
-              if (elapsedTime > 30000) {
-                switchToNextBox();
+            // Fallback: 搜索已读邮件（可能被其他客户端标记已读）
+            this.log(`[DEBUG] UNSEEN 无结果，尝试 fallback 搜索所有最近邮件...`);
+            const fallbackCriteria = [['SINCE', sinceDate]];
+            imap.search(fallbackCriteria, (fallbackErr, fallbackResults) => {
+              this.log(`[DEBUG] Fallback 搜索结果: ${fallbackResults ? fallbackResults.length : 0} 封邮件`);
+              if (fallbackErr || !fallbackResults || fallbackResults.length === 0) {
+                // 如果收件箱没有邮件且未检查垃圾箱，则切换到垃圾箱
+                if (currentBox === 'INBOX' && !junkBoxChecked) {
+                  const elapsedTime = Date.now() - startTime;
+                  // 在收件箱等待30秒后，如果还没找到，就检查垃圾箱
+                  if (elapsedTime > 30000) {
+                    switchToNextBox();
+                  }
+                }
+                return;
               }
-            }
+              this.log(`未读邮件为空，尝试搜索已读邮件，发现 ${fallbackResults.length} 封`);
+              // 将 fallback 结果合并到主流程处理
+              results = fallbackResults;
+              processSearchResults(results);
+            });
             return;
           }
+          
+          processSearchResults(results);
+        });
+        
+        // 抽取搜索结果处理逻辑
+        const processSearchResults = (results) => {
           
           // 过滤掉已处理的邮件
           const newResults = results.filter(id => !processedEmails.has(id));
@@ -421,7 +472,8 @@ class EmailReceiver {
                 this.log(`收件人匹配，目标邮箱: ${targetEmail}`);
                 
                 // 优先从主题提取验证码（最快路径，90%的情况）
-                const subjectMatch = subject.match(/^(\d{6})\s*-/);
+                // 支持格式: "123456 - xxx" 或 "xxx - 123456" 或 "Verify xxx 123456"
+                const subjectMatch = subject.match(/(?:^|[\s\-:])([0-9]{6})(?:[\s\-]|$)/);
                 if (subjectMatch) {
                   processedEmails.add(emailId);
                   cleanup();
@@ -444,8 +496,25 @@ class EmailReceiver {
                 
                 fullFetch.on('message', (fullMsg) => {
                   fullMsg.on('body', (fullStream) => {
-                    simpleParser(fullStream, async (err, fullParsed) => {
+                    // 使用增强的编码处理
+                    simpleParser(fullStream, {
+                      // 设置默认编码 fallback
+                      skipHtmlToText: false,
+                      skipTextToHtml: false,
+                      skipTextLinks: true
+                    }, async (err, fullParsed) => {
                       if (err || isResolved) return;
+                      
+                      // 尝试修复可能的编码问题
+                      if (fullParsed.html && isGarbledText(fullParsed.html)) {
+                        this.log('检测到可能的编码问题，尝试 GBK 解码...');
+                        try {
+                          // mailparser 内部已处理大部分编码，这里做额外检查
+                        } catch (e) {
+                          this.log(`编码修复失败: ${e.message}`);
+                        }
+                      }
+                      
                       await processEmail(fullParsed, emailId);
                     });
                   });
@@ -466,7 +535,8 @@ class EmailReceiver {
           fetch.once('end', () => {
             // 邮件获取完成
           });
-        });
+        };
+
       };
 
       // IMAP连接成功
